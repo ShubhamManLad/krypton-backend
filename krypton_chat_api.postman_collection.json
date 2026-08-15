@@ -1,0 +1,309 @@
+{
+  "info": {
+    "_postman_id": "7a8b9c0d-1e2f-3a4b-5c6d-7e8f9a0b1c2d",
+    "name": "Krypton Chat API",
+    "description": "Postman Collection for Krypton Chat Backend (Quarkus REST & WebSockets)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "wsUrl",
+      "value": "ws://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "userId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "recipientId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "conversationId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health Check",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/health-check",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "health-check"
+          ]
+        },
+        "description": "Check if the server is up and responding."
+      },
+      "response": []
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Register User 1 (Alice)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    var json = pm.response.json();",
+                  "    if (json.token) {",
+                  "        pm.collectionVariables.set('token', json.token);",
+                  "    }",
+                  "    if (json.userId) {",
+                  "        pm.collectionVariables.set('userId', json.userId);",
+                  "    }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"alice\",\n  \"password\": \"password123\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/register",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "register"
+              ]
+            },
+            "description": "Registers a new user and automatically updates the collection `token` and `userId` variables on success (200)."
+          },
+          "response": []
+        },
+        {
+          "name": "Register User 2 (Bob)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    var json = pm.response.json();",
+                  "    if (json.userId) {",
+                  "        pm.collectionVariables.set('recipientId', json.userId);",
+                  "    }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"bob\",\n  \"password\": \"password123\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/register",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "register"
+              ]
+            },
+            "description": "Registers a second user and sets `recipientId` variable for testing direct messages."
+          },
+          "response": []
+        },
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    var json = pm.response.json();",
+                  "    if (json.token) {",
+                  "        pm.collectionVariables.set('token', json.token);",
+                  "    }",
+                  "    if (json.userId) {",
+                  "        pm.collectionVariables.set('userId', json.userId);",
+                  "    }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"alice\",\n  \"password\": \"password123\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Logs in an existing user and returns JWT token."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Conversations",
+      "item": [
+        {
+          "name": "Get Conversation Messages",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/conversations/{{conversationId}}/messages?limit=50",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "conversations",
+                "{{conversationId}}",
+                "messages"
+              ],
+              "query": [
+                {
+                  "key": "before",
+                  "value": "2026-08-15T12:00:00Z",
+                  "description": "Optional ISO-8601 timestamp to fetch messages before this point",
+                  "disabled": true
+                },
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "description": "Optional limit (default 50)"
+                }
+              ]
+            },
+            "description": "Fetches paginated message history for a conversation ordered by `sentAt ASC`.\nRequires Bearer token and user must be participant in the conversation."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "WebSocket (Reference & Documentation)",
+      "item": [
+        {
+          "name": "1. Connect URL & Handshake",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{wsUrl}}/chat?token={{token}}",
+              "host": [
+                "{{wsUrl}}"
+              ],
+              "path": [
+                "chat"
+              ],
+              "query": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "description": "JWT token issued by /auth/login or /auth/register"
+                }
+              ]
+            },
+            "description": "### WebSocket Connection URL\nUse Postman's WebSocket Request feature or any WebSocket client to connect to:\n`ws://localhost:8080/chat?token={{token}}`\n\n- Rejects with code 4001 if token is invalid or missing.\n- Automatically registers presence and broadcasts active users list."
+          },
+          "response": []
+        },
+        {
+          "name": "2. Client Send Message Payload (Sample)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"message\",\n  \"recipientId\": \"{{recipientId}}\",\n  \"content\": \"Hello there!\",\n  \"clientMsgId\": \"{{$guid}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/websocket/sample-send-message",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "websocket",
+                "sample-send-message"
+              ]
+            },
+            "description": "### Sample JSON payload to send over WebSocket connection:\n```json\n{\n  \"type\": \"message\",\n  \"recipientId\": \"<uuid>\",\n  \"content\": \"Hello there!\",\n  \"clientMsgId\": \"<uuid>\"\n}\n```\n\n### Expected Server Ack to Sender:\n```json\n{\n  \"type\": \"ack\",\n  \"clientMsgId\": \"<same-uuid>\",\n  \"serverMsgId\": \"<server-uuid>\"\n}\n```\n\n### Expected Server Push to Recipient:\n```json\n{\n  \"type\": \"message\",\n  \"id\": \"<server-uuid>\",\n  \"conversationId\": \"<uuid>\",\n  \"senderId\": \"<uuid>\",\n  \"content\": \"Hello there!\",\n  \"sentAt\": \"2026-08-15T10:30:00Z\",\n  \"clientMsgId\": \"<client-uuid>\"\n}\n```"
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}
