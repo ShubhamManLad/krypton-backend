@@ -15,47 +15,53 @@ public class PresenceRegistry {
 
     private static final Logger LOG = Logger.getLogger(PresenceRegistry.class);
 
-    private final ConcurrentHashMap<UUID, WebSocketConnection> sessions = new ConcurrentHashMap<>();
+    public record UserSession(UUID userId, String username, WebSocketConnection connection) {}
+
+    private final ConcurrentHashMap<UUID, UserSession> activeSessions = new ConcurrentHashMap<>();
 
     @Inject
     ObjectMapper objectMapper;
 
-    public void join(UUID userId, WebSocketConnection conn) {
-        sessions.put(userId, conn);
+    public void join(UUID userId, String username, WebSocketConnection conn) {
+        activeSessions.put(userId, new UserSession(userId, username, conn));
     }
 
     public void leave(UUID userId) {
-        sessions.remove(userId);
+        activeSessions.remove(userId);
     }
 
     public Optional<WebSocketConnection> connectionFor(UUID userId) {
-        return Optional.ofNullable(sessions.get(userId));
+        UserSession session = activeSessions.get(userId);
+        return session != null ? Optional.ofNullable(session.connection()) : Optional.empty();
     }
 
     public Set<UUID> activeUserIds() {
-        return Collections.unmodifiableSet(sessions.keySet());
+        return Collections.unmodifiableSet(activeSessions.keySet());
     }
 
     public void broadcastPresence() {
         try {
-            List<String> activeUsers = sessions.keySet().stream()
-                    .map(UUID::toString)
-                    .sorted()
+            List<Map<String, String>> userList = activeSessions.values().stream()
+                    .map(s -> Map.of(
+                            "userId", s.userId().toString(),
+                            "username", s.username() != null ? s.username() : ""
+                    ))
+                    .sorted(Comparator.comparing(m -> m.get("username")))
                     .collect(Collectors.toList());
 
             Map<String, Object> presenceMsg = Map.of(
                     "type", "presence",
-                    "activeUsers", activeUsers
+                    "activeUsers", userList
             );
 
             String json = objectMapper.writeValueAsString(presenceMsg);
 
-            for (Map.Entry<UUID, WebSocketConnection> entry : sessions.entrySet()) {
-                WebSocketConnection conn = entry.getValue();
+            for (UserSession session : activeSessions.values()) {
+                WebSocketConnection conn = session.connection();
                 if (conn.isOpen()) {
                     conn.sendText(json).subscribe().with(
                             item -> {},
-                            failure -> LOG.warnf("Failed to send presence to user %s: %s", entry.getKey(), failure.getMessage())
+                            failure -> LOG.warnf("Failed to send presence to user %s: %s", session.userId(), failure.getMessage())
                     );
                 }
             }

@@ -54,6 +54,7 @@ public class ChatWebSocket {
         }
 
         UUID userId;
+        String username;
         try {
             JsonWebToken jwt = jwtParser.parse(token);
             String sub = jwt.getSubject();
@@ -61,6 +62,13 @@ public class ChatWebSocket {
                 throw new IllegalArgumentException("Missing sub in JWT");
             }
             userId = UUID.fromString(sub);
+            username = jwt.getClaim("upn") != null ? jwt.getClaim("upn").toString() : jwt.getName();
+            if (username == null || username.isBlank()) {
+                User user = User.findById(userId);
+                if (user != null) {
+                    username = user.username;
+                }
+            }
         } catch (ParseException | IllegalArgumentException e) {
             LOG.warnf("WebSocket connection rejected: invalid token (%s)", e.getMessage());
             closeUnauthorized(connection);
@@ -69,8 +77,8 @@ public class ChatWebSocket {
 
         // Register session
         connectionUserMap.put(connection.id(), userId);
-        presenceRegistry.join(userId, connection);
-        LOG.infof("User %s connected on WebSocket session %s", userId, connection.id());
+        presenceRegistry.join(userId, username, connection);
+        LOG.infof("User %s (%s) connected on WebSocket session %s", username, userId, connection.id());
 
         // Broadcast presence to ALL connected clients
         presenceRegistry.broadcastPresence();
