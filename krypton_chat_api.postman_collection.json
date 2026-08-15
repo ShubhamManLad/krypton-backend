@@ -200,6 +200,48 @@
       ]
     },
     {
+      "name": "Users",
+      "item": [
+        {
+          "name": "Get Active Users",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/users/active",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users",
+                "active"
+              ]
+            },
+            "description": "Fetches a list of all currently active/online users in the system."
+          },
+          "response": []
+        },
+        {
+          "name": "Get All Users",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/users",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users"
+              ]
+            },
+            "description": "Fetches a list of all registered users in the system, excluding the caller, along with their active/online status."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
       "name": "Conversations",
       "item": [
         {

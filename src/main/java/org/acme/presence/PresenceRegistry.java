@@ -39,6 +39,10 @@ public class PresenceRegistry {
         return Collections.unmodifiableSet(activeSessions.keySet());
     }
 
+    public Collection<UserSession> activeSessions() {
+        return Collections.unmodifiableCollection(activeSessions.values());
+    }
+
     public void broadcastPresence() {
         try {
             List<Map<String, String>> userList = activeSessions.values().stream()
