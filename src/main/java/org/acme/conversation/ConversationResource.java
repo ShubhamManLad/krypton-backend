@@ -8,10 +8,18 @@ import jakarta.ws.rs.core.Response;
 import org.acme.model.Conversation;
 import org.acme.model.Message;
 import org.acme.model.User;
+import org.acme.presence.PresenceRegistry;
+import org.acme.websocket.OutgoingMessage;
 import org.eclipse.microprofile.jwt.JsonWebToken;
+import io.quarkus.websockets.next.WebSocketConnection;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 @Path("/conversations")
@@ -19,11 +27,19 @@ import java.util.UUID;
 @Consumes(MediaType.APPLICATION_JSON)
 public class ConversationResource {
 
+    private static final Logger LOG = LoggerFactory.getLogger(ConversationResource.class);
+
     @Inject
     JsonWebToken jwt;
 
     @Inject
     ConversationService conversationService;
+
+    @Inject
+    PresenceRegistry presenceRegistry;
+
+    @Inject
+    ObjectMapper objectMapper;
 
     /**
      * List all conversations the authenticated user participates in,
@@ -164,6 +180,90 @@ public class ConversationResource {
                 .toList();
 
         return Response.ok(responseList).build();
+    }
+
+    /**
+     * Mark all messages in a conversation as read by conversation ID.
+     */
+    @POST
+    @Path("/{conversationId}/read")
+    @RolesAllowed("user")
+    public Response markAsRead(@PathParam("conversationId") UUID conversationId) {
+        UUID authenticatedUserId = getAuthenticatedUserId();
+        if (authenticatedUserId == null) {
+            return Response.status(Response.Status.UNAUTHORIZED)
+                    .entity("{\"error\":\"Unauthorized\"}")
+                    .build();
+        }
+
+        Conversation conversation = Conversation.findById(conversationId);
+        if (conversation == null || !conversation.hasParticipant(authenticatedUserId)) {
+            return Response.status(Response.Status.FORBIDDEN)
+                    .entity("{\"error\":\"Access denied to conversation\"}")
+                    .build();
+        }
+
+        int updatedCount = conversationService.markConversationAsRead(conversationId, authenticatedUserId);
+        Instant readAt = Instant.now();
+
+        // Broadcast read receipt to the other participant over WebSocket if online
+        UUID otherUserId = conversation.user1Id.equals(authenticatedUserId) ? conversation.user2Id : conversation.user1Id;
+        notifyReadReceipt(conversationId, authenticatedUserId, otherUserId, readAt);
+
+        return Response.ok(Map.of(
+                "success", true,
+                "conversationId", conversationId.toString(),
+                "markedRead", updatedCount,
+                "readAt", readAt.toString()
+        )).build();
+    }
+
+    /**
+     * Mark all messages in a conversation as read by recipient ID.
+     */
+    @POST
+    @Path("/with/{recipientId}/read")
+    @RolesAllowed("user")
+    public Response markAsReadWith(@PathParam("recipientId") UUID recipientId) {
+        UUID authenticatedUserId = getAuthenticatedUserId();
+        if (authenticatedUserId == null) {
+            return Response.status(Response.Status.UNAUTHORIZED)
+                    .entity("{\"error\":\"Unauthorized\"}")
+                    .build();
+        }
+
+        Conversation conversation = Conversation.findByUsers(authenticatedUserId, recipientId);
+        if (conversation == null) {
+            return Response.ok(Map.of("success", true, "markedRead", 0)).build();
+        }
+
+        int updatedCount = conversationService.markConversationAsRead(conversation.id, authenticatedUserId);
+        Instant readAt = Instant.now();
+
+        notifyReadReceipt(conversation.id, authenticatedUserId, recipientId, readAt);
+
+        return Response.ok(Map.of(
+                "success", true,
+                "conversationId", conversation.id.toString(),
+                "markedRead", updatedCount,
+                "readAt", readAt.toString()
+        )).build();
+    }
+
+    private void notifyReadReceipt(UUID conversationId, UUID readerId, UUID targetUserId, Instant readAt) {
+        try {
+            Optional<WebSocketConnection> connOpt = presenceRegistry.connectionFor(targetUserId);
+            if (connOpt.isPresent() && connOpt.get().isOpen()) {
+                OutgoingMessage readEvent = OutgoingMessage.readReceipt(conversationId, readerId, readAt);
+                String json = objectMapper.writeValueAsString(readEvent);
+                connOpt.get().sendText(json).subscribe().with(
+                        v -> {},
+                        err -> LOG.warn("Failed to push read receipt: {}", err.getMessage())
+                );
+            }
+        } catch (Exception e) {
+            LOG.warn("Error sending read receipt notification: {}", e.getMessage());
+        }
     }
 
     private UUID getAuthenticatedUserId() {

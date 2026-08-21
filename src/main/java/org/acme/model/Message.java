@@ -12,7 +12,8 @@ import java.util.UUID;
     name = "messages",
     indexes = {
         @Index(name = "idx_msg_conv_sent", columnList = "conversation_id, sent_at"),
-        @Index(name = "idx_msg_client_id", columnList = "client_msg_id")
+        @Index(name = "idx_msg_client_id", columnList = "client_msg_id"),
+        @Index(name = "idx_msg_status", columnList = "conversation_id, status")
     }
 )
 public class Message extends PanacheEntityBase {
@@ -37,7 +38,16 @@ public class Message extends PanacheEntityBase {
     @Column(name = "client_msg_id", nullable = false)
     public String clientMsgId;
 
-    // ── Finders ──────────────────────────────────────────────────────────────
+    @Column(name = "status", nullable = false)
+    public String status = "SENT"; // SENT, DELIVERED, READ
+
+    @Column(name = "delivered_at")
+    public Instant deliveredAt;
+
+    @Column(name = "read_at")
+    public Instant readAt;
+
+    // ── Finders & Updates ───────────────────────────────────────────────────
 
     public static Message findByClientMsgId(String clientMsgId) {
         return find("clientMsgId", clientMsgId).firstResult();
@@ -59,5 +69,19 @@ public class Message extends PanacheEntityBase {
 
     public static Message findLatestByConversation(UUID conversationId) {
         return find("conversationId = ?1 order by sentAt desc", conversationId).firstResult();
+    }
+
+    public static long countUnread(UUID conversationId, UUID userId) {
+        return count("conversationId = ?1 and senderId != ?2 and status != 'READ'", conversationId, userId);
+    }
+
+    public static int markConversationRead(UUID conversationId, UUID readerId, Instant readAt) {
+        return update("status = 'READ', readAt = ?1, deliveredAt = COALESCE(deliveredAt, ?1) where conversationId = ?2 and senderId != ?3 and status != 'READ'",
+                readAt, conversationId, readerId);
+    }
+
+    public static int markMessagesDelivered(UUID conversationId, UUID recipientId, Instant deliveredAt) {
+        return update("status = 'DELIVERED', deliveredAt = ?1 where conversationId = ?2 and senderId != ?3 and status = 'SENT'",
+                deliveredAt, conversationId, recipientId);
     }
 }

@@ -34,13 +34,16 @@ public class ConversationSummaryResponse {
         @JsonFormat(shape = JsonFormat.Shape.STRING, timezone = "UTC")
         public Instant sentAt;
 
+        public String status; // SENT, DELIVERED, READ
+
         public LastMessageInfo() {}
 
-        public LastMessageInfo(String id, String senderId, String content, Instant sentAt) {
+        public LastMessageInfo(String id, String senderId, String content, Instant sentAt, String status) {
             this.id = id;
             this.senderId = senderId;
             this.content = content;
             this.sentAt = sentAt;
+            this.status = status != null ? status : "SENT";
         }
     }
 

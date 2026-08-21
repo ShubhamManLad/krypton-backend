@@ -388,7 +388,33 @@
                 }
               ]
             },
-            "description": "Fetches paginated message history for a conversation ordered by `sentAt ASC`.\nRequires Bearer token and user must be participant in the conversation."
+        {
+          "name": "Mark Conversation as Read",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/conversations/{{conversationId}}/read",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "conversations",
+                "{{conversationId}}",
+                "read"
+              ]
+            },
+            "description": "Marks all messages sent to the authenticated user in the conversation as READ and dispatches read receipt over WebSocket."
           },
           "response": []
         }

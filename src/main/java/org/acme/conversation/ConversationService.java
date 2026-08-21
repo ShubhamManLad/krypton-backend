@@ -53,18 +53,21 @@ public class ConversationService {
                         latestMsg.id.toString(),
                         latestMsg.senderId.toString(),
                         latestMsg.content,
-                        latestMsg.sentAt
+                        latestMsg.sentAt,
+                        latestMsg.status != null ? latestMsg.status : "SENT"
                 );
                 if (latestMsg.sentAt != null) {
                     activityTime = latestMsg.sentAt;
                 }
             }
 
+            int unreadCount = (int) Message.countUnread(conv.id, userId);
+
             ConversationSummaryResponse summary = new ConversationSummaryResponse(
                     conv.id,
                     partnerInfo,
                     lastMsgInfo,
-                    0
+                    unreadCount
             );
 
             items.add(new ConversationSummaryItem(summary, activityTime));
@@ -91,6 +94,16 @@ public class ConversationService {
             return Collections.emptyList();
         }
         return getMessages(conv.id, before, limit);
+    }
+
+    @Transactional
+    public int markConversationAsRead(UUID conversationId, UUID readerId) {
+        return Message.markConversationRead(conversationId, readerId, Instant.now());
+    }
+
+    @Transactional
+    public int markConversationAsDelivered(UUID conversationId, UUID recipientId) {
+        return Message.markMessagesDelivered(conversationId, recipientId, Instant.now());
     }
 
     private static class ConversationSummaryItem {

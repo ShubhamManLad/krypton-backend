@@ -19,6 +19,7 @@ import org.slf4j.LoggerFactory;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -83,6 +84,9 @@ public class ChatWebSocket {
 
         // Broadcast presence to ALL connected clients
         presenceRegistry.broadcastPresence();
+
+        // Mark any pending undelivered messages sent to this user as DELIVERED
+        markPendingMessagesDeliveredOnConnect(userId);
     }
 
     @OnTextMessage
@@ -102,13 +106,20 @@ public class ChatWebSocket {
             return;
         }
 
-        // Validate message type
-        if (incoming == null || !"message".equals(incoming.type)) {
-            sendError(connection, "Invalid message type. Expected 'message'");
+        if (incoming == null || incoming.type == null) {
+            sendError(connection, "Missing message type");
             return;
         }
 
-        // Validate recipientId
+        switch (incoming.type) {
+            case "message" -> handleChatMessage(incoming, senderId, connection);
+            case "read" -> handleReadReceipt(incoming, senderId, connection);
+            case "delivery_ack" -> handleDeliveryAck(incoming, senderId, connection);
+            default -> sendError(connection, "Unknown message type: " + incoming.type);
+        }
+    }
+
+    private void handleChatMessage(IncomingMessage incoming, UUID senderId, WebSocketConnection connection) {
         if (incoming.recipientId == null) {
             sendError(connection, "recipientId is required");
             return;
@@ -120,65 +131,154 @@ public class ChatWebSocket {
             return;
         }
 
-        // Validate content
         if (incoming.content == null || incoming.content.trim().isEmpty()) {
             sendError(connection, "Message content cannot be blank");
             return;
         }
 
-        // Validate clientMsgId
         if (incoming.clientMsgId == null || incoming.clientMsgId.trim().isEmpty()) {
             sendError(connection, "clientMsgId is required");
             return;
         }
 
         try {
-            // Find or create canonical conversation
             Conversation conversation = conversationService.findOrCreate(senderId, incoming.recipientId);
 
             // Check idempotency with clientMsgId
             Message existing = Message.findByClientMsgId(incoming.clientMsgId);
             if (existing != null) {
-                // Skip insertion and re-send ack with existing server id
-                sendAck(connection, existing.clientMsgId, existing.id);
+                sendAck(connection, existing.clientMsgId, existing.id, existing.status);
                 return;
             }
 
-            // Persist new message
+            // Check if recipient is currently online to set status
+            Optional<WebSocketConnection> recipientConnOpt = presenceRegistry.connectionFor(incoming.recipientId);
+            boolean isRecipientOnline = recipientConnOpt.isPresent() && recipientConnOpt.get().isOpen();
+
             Message newMessage = new Message();
             newMessage.conversationId = conversation.id;
             newMessage.senderId = senderId;
             newMessage.content = incoming.content;
             newMessage.sentAt = Instant.now();
             newMessage.clientMsgId = incoming.clientMsgId;
+            newMessage.status = isRecipientOnline ? "DELIVERED" : "SENT";
+            if (isRecipientOnline) {
+                newMessage.deliveredAt = Instant.now();
+            }
             newMessage.persist();
 
-            // 1. Send ack ONLY to the sender
-            sendAck(connection, incoming.clientMsgId, newMessage.id);
+            // 1. Send ack to sender (with status DELIVERED or SENT)
+            sendAck(connection, incoming.clientMsgId, newMessage.id, newMessage.status);
 
-            // 2. Push full message to the recipient (if connected)
-            Optional<WebSocketConnection> recipientConnOpt = presenceRegistry.connectionFor(incoming.recipientId);
-            if (recipientConnOpt.isPresent()) {
+            // 2. Push message to recipient if online
+            if (isRecipientOnline) {
                 WebSocketConnection recipientConn = recipientConnOpt.get();
-                if (recipientConn.isOpen()) {
-                    OutgoingMessage pushMsg = OutgoingMessage.chatMessage(
-                            newMessage.id,
-                            conversation.id,
-                            senderId,
-                            newMessage.content,
-                            newMessage.sentAt,
-                            newMessage.clientMsgId
-                    );
-                    String pushJson = objectMapper.writeValueAsString(pushMsg);
-                    recipientConn.sendText(pushJson).subscribe().with(
-                            v -> {},
-                            err -> LOG.warn("Failed to push message to recipient {}: {}", incoming.recipientId, err.getMessage())
-                    );
-                }
+                OutgoingMessage pushMsg = OutgoingMessage.chatMessage(
+                        newMessage.id,
+                        conversation.id,
+                        senderId,
+                        newMessage.content,
+                        newMessage.sentAt,
+                        newMessage.clientMsgId,
+                        newMessage.status
+                );
+                pushMsg.deliveredAt = newMessage.deliveredAt;
+                sendPush(recipientConn, pushMsg, incoming.recipientId);
             }
         } catch (Exception e) {
             LOG.error("Error processing message", e);
             sendError(connection, "Internal server error processing message");
+        }
+    }
+
+    private void handleReadReceipt(IncomingMessage incoming, UUID readerId, WebSocketConnection connection) {
+        if (incoming.conversationId == null && incoming.messageId == null) {
+            sendError(connection, "conversationId or messageId is required for read receipt");
+            return;
+        }
+
+        try {
+            UUID conversationId = incoming.conversationId;
+            if (conversationId == null && incoming.messageId != null) {
+                Message msg = Message.findById(incoming.messageId);
+                if (msg != null) {
+                    conversationId = msg.conversationId;
+                }
+            }
+
+            if (conversationId == null) {
+                sendError(connection, "Conversation not found");
+                return;
+            }
+
+            Conversation conv = Conversation.findById(conversationId);
+            if (conv == null || !conv.hasParticipant(readerId)) {
+                sendError(connection, "Conversation not found or access denied");
+                return;
+            }
+
+            Instant readAt = Instant.now();
+            conversationService.markConversationAsRead(conversationId, readerId);
+
+            // Notify the other participant if online
+            UUID otherUserId = conv.user1Id.equals(readerId) ? conv.user2Id : conv.user1Id;
+            Optional<WebSocketConnection> otherConnOpt = presenceRegistry.connectionFor(otherUserId);
+            if (otherConnOpt.isPresent() && otherConnOpt.get().isOpen()) {
+                OutgoingMessage readEvent = OutgoingMessage.readReceipt(conversationId, readerId, readAt);
+                sendPush(otherConnOpt.get(), readEvent, otherUserId);
+            }
+        } catch (Exception e) {
+            LOG.error("Error processing read receipt", e);
+            sendError(connection, "Failed to process read receipt");
+        }
+    }
+
+    private void handleDeliveryAck(IncomingMessage incoming, UUID recipientId, WebSocketConnection connection) {
+        if (incoming.messageId == null && incoming.conversationId == null) {
+            return;
+        }
+
+        try {
+            if (incoming.messageId != null) {
+                Message msg = Message.findById(incoming.messageId);
+                if (msg != null && "SENT".equals(msg.status)) {
+                    msg.status = "DELIVERED";
+                    msg.deliveredAt = Instant.now();
+                    msg.persist();
+
+                    // Notify sender
+                    Optional<WebSocketConnection> senderConnOpt = presenceRegistry.connectionFor(msg.senderId);
+                    if (senderConnOpt.isPresent() && senderConnOpt.get().isOpen()) {
+                        OutgoingMessage statusEvent = OutgoingMessage.messageStatus(msg.id, msg.conversationId, "DELIVERED", msg.deliveredAt);
+                        sendPush(senderConnOpt.get(), statusEvent, msg.senderId);
+                    }
+                }
+            } else if (incoming.conversationId != null) {
+                conversationService.markConversationAsDelivered(incoming.conversationId, recipientId);
+            }
+        } catch (Exception e) {
+            LOG.error("Error processing delivery ack", e);
+        }
+    }
+
+    @Transactional
+    public void markPendingMessagesDeliveredOnConnect(UUID userId) {
+        try {
+            List<Conversation> conversations = Conversation.findByUser(userId);
+            Instant now = Instant.now();
+            for (Conversation conv : conversations) {
+                int updated = Message.markMessagesDelivered(conv.id, userId, now);
+                if (updated > 0) {
+                    UUID partnerId = conv.user1Id.equals(userId) ? conv.user2Id : conv.user1Id;
+                    Optional<WebSocketConnection> partnerConnOpt = presenceRegistry.connectionFor(partnerId);
+                    if (partnerConnOpt.isPresent() && partnerConnOpt.get().isOpen()) {
+                        OutgoingMessage statusEvent = OutgoingMessage.messageStatus(null, conv.id, "DELIVERED", now);
+                        sendPush(partnerConnOpt.get(), statusEvent, partnerId);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            LOG.warn("Failed to mark pending messages as delivered on connect: {}", e.getMessage());
         }
     }
 
@@ -211,13 +311,25 @@ public class ChatWebSocket {
         return null;
     }
 
-    private void sendAck(WebSocketConnection connection, String clientMsgId, UUID serverMsgId) {
+    private void sendAck(WebSocketConnection connection, String clientMsgId, UUID serverMsgId, String status) {
         try {
-            OutgoingMessage ack = OutgoingMessage.ack(clientMsgId, serverMsgId);
+            OutgoingMessage ack = OutgoingMessage.ack(clientMsgId, serverMsgId, status);
             String json = objectMapper.writeValueAsString(ack);
             connection.sendText(json).subscribe().with(v -> {}, err -> LOG.warn("Failed to send ack: {}", err.getMessage()));
         } catch (Exception e) {
             LOG.error("Failed to serialize ack", e);
+        }
+    }
+
+    private void sendPush(WebSocketConnection connection, OutgoingMessage msg, UUID targetUserId) {
+        try {
+            String json = objectMapper.writeValueAsString(msg);
+            connection.sendText(json).subscribe().with(
+                    v -> {},
+                    err -> LOG.warn("Failed to push to user {}: {}", targetUserId, err.getMessage())
+            );
+        } catch (Exception e) {
+            LOG.error("Failed to serialize push message", e);
         }
     }
 
