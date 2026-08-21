@@ -245,7 +245,112 @@
       "name": "Conversations",
       "item": [
         {
-          "name": "Get Conversation Messages",
+          "name": "List Active Conversations",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/conversations",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "conversations"
+              ]
+            },
+            "description": "Fetches all active conversations for the authenticated user sorted by latest message activity DESC."
+          },
+          "response": []
+        },
+        {
+          "name": "Get or Create Conversation with Recipient",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/conversations/with/{{recipientId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "conversations",
+                "with",
+                "{{recipientId}}"
+              ]
+            },
+            "description": "Finds existing 1:1 conversation or creates a new one between the caller and the recipient user ID."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Messages with Partner ID",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/conversations/messages?partnerId={{recipientId}}&limit=50",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "conversations",
+                "messages"
+              ],
+              "query": [
+                {
+                  "key": "partnerId",
+                  "value": "{{recipientId}}",
+                  "description": "Partner User ID"
+                },
+                {
+                  "key": "before",
+                  "value": "2026-08-15T12:00:00Z",
+                  "description": "Optional ISO-8601 timestamp",
+                  "disabled": true
+                },
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "description": "Optional limit (default 50)"
+                }
+              ]
+            },
+            "description": "Fetches messages directly by partner user ID."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Conversation Messages by ID",
           "request": {
             "auth": {
               "type": "bearer",

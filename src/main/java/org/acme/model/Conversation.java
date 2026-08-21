@@ -22,6 +22,9 @@ public class Conversation extends PanacheEntityBase {
     @Column(name = "user2_id", nullable = false)
     public UUID user2Id;
 
+    @Column(name = "created_at", nullable = false)
+    public java.time.Instant createdAt = java.time.Instant.now();
+
     // ── Finders ──────────────────────────────────────────────────────────────
 
     /**
@@ -30,6 +33,16 @@ public class Conversation extends PanacheEntityBase {
      */
     public static Conversation findByPair(UUID user1Id, UUID user2Id) {
         return find("user1Id = ?1 and user2Id = ?2", user1Id, user2Id).firstResult();
+    }
+
+    public static Conversation findByUsers(UUID u1, UUID u2) {
+        UUID user1Id = u1.compareTo(u2) < 0 ? u1 : u2;
+        UUID user2Id = u1.compareTo(u2) < 0 ? u2 : u1;
+        return findByPair(user1Id, user2Id);
+    }
+
+    public static java.util.List<Conversation> findByUser(UUID userId) {
+        return find("user1Id = ?1 or user2Id = ?1", userId).list();
     }
 
     /**

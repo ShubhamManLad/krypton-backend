@@ -56,4 +56,8 @@ public class Message extends PanacheEntityBase {
                     .list();
         }
     }
+
+    public static Message findLatestByConversation(UUID conversationId) {
+        return find("conversationId = ?1 order by sentAt desc", conversationId).firstResult();
+    }
 }

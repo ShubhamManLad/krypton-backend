@@ -51,7 +51,7 @@ public class PresenceRegistry {
                             "username", s.username() != null ? s.username() : ""
                     ))
                     .sorted(Comparator.comparing(m -> m.get("username")))
-                    .collect(Collectors.toList());
+                    .toList();
 
             Map<String, Object> presenceMsg = Map.of(
                     "type", "presence",

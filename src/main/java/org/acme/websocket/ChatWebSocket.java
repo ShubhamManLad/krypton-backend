@@ -13,7 +13,8 @@ import org.acme.model.Message;
 import org.acme.model.User;
 import org.acme.presence.PresenceRegistry;
 import org.eclipse.microprofile.jwt.JsonWebToken;
-import org.jboss.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
@@ -27,7 +28,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @WebSocket(path = "/chat")
 public class ChatWebSocket {
 
-    private static final Logger LOG = Logger.getLogger(ChatWebSocket.class);
+    private static final Logger LOG = LoggerFactory.getLogger(ChatWebSocket.class);
 
     @Inject
     JWTParser jwtParser;
@@ -70,7 +71,7 @@ public class ChatWebSocket {
                 }
             }
         } catch (ParseException | IllegalArgumentException e) {
-            LOG.warnf("WebSocket connection rejected: invalid token (%s)", e.getMessage());
+            LOG.warn("WebSocket connection rejected: invalid token ({})", e.getMessage());
             closeUnauthorized(connection);
             return;
         }
@@ -78,7 +79,7 @@ public class ChatWebSocket {
         // Register session
         connectionUserMap.put(connection.id(), userId);
         presenceRegistry.join(userId, username, connection);
-        LOG.infof("User %s (%s) connected on WebSocket session %s", username, userId, connection.id());
+        LOG.info("User {} ({}) connected on WebSocket session {}", username, userId, connection.id());
 
         // Broadcast presence to ALL connected clients
         presenceRegistry.broadcastPresence();
@@ -171,7 +172,7 @@ public class ChatWebSocket {
                     String pushJson = objectMapper.writeValueAsString(pushMsg);
                     recipientConn.sendText(pushJson).subscribe().with(
                             v -> {},
-                            err -> LOG.warnf("Failed to push message to recipient %s: %s", incoming.recipientId, err.getMessage())
+                            err -> LOG.warn("Failed to push message to recipient {}: {}", incoming.recipientId, err.getMessage())
                     );
                 }
             }
@@ -186,7 +187,7 @@ public class ChatWebSocket {
         UUID userId = connectionUserMap.remove(connection.id());
         if (userId != null) {
             presenceRegistry.leave(userId);
-            LOG.infof("User %s disconnected from WebSocket session %s", userId, connection.id());
+            LOG.info("User {} disconnected from WebSocket session {}", userId, connection.id());
             presenceRegistry.broadcastPresence();
         }
     }
@@ -214,7 +215,7 @@ public class ChatWebSocket {
         try {
             OutgoingMessage ack = OutgoingMessage.ack(clientMsgId, serverMsgId);
             String json = objectMapper.writeValueAsString(ack);
-            connection.sendText(json).subscribe().with(v -> {}, err -> LOG.warn("Failed to send ack: " + err.getMessage()));
+            connection.sendText(json).subscribe().with(v -> {}, err -> LOG.warn("Failed to send ack: {}", err.getMessage()));
         } catch (Exception e) {
             LOG.error("Failed to serialize ack", e);
         }
