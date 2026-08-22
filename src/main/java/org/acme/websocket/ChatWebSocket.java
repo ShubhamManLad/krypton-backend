@@ -198,8 +198,17 @@ public class ChatWebSocket {
 
     private void handleReadReceipt(IncomingMessage incoming, UUID readerId, WebSocketConnection connection) {
         if (incoming.conversationId == null && incoming.messageId == null) {
-            sendError(connection, "conversationId or messageId is required for read receipt");
-            return;
+            if (incoming.partnerId != null) {
+                Conversation conv = Conversation.findBetween(readerId, incoming.partnerId);
+                if (conv != null) {
+                    incoming.conversationId = conv.id;
+                } else {
+                    // Empty conversation on first open, nothing to mark as read
+                    return;
+                }
+            } else {
+                return;
+            }
         }
 
         try {

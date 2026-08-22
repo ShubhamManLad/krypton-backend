@@ -7,6 +7,7 @@ public class IncomingMessage {
     public String type; // "message", "read", "delivery_ack"
     public UUID recipientId;
     public UUID conversationId;
+    public UUID partnerId;
     public UUID messageId;
     public String content;
     public String clientMsgId;

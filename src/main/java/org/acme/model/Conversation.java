@@ -41,6 +41,10 @@ public class Conversation extends PanacheEntityBase {
         return findByPair(user1Id, user2Id);
     }
 
+    public static Conversation findBetween(UUID u1, UUID u2) {
+        return findByUsers(u1, u2);
+    }
+
     public static java.util.List<Conversation> findByUser(UUID userId) {
         return find("user1Id = ?1 or user2Id = ?1", userId).list();
     }
