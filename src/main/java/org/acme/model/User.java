@@ -19,6 +19,9 @@ public class User extends PanacheEntityBase {
     @Column(name = "password_hash", nullable = false)
     public String passwordHash;
 
+    @Column(name = "public_key", nullable = true, length = 4000)
+    public String publicKey;
+
     // ── Finders ──────────────────────────────────────────────────────────────
 
     public static User findByUsername(String username) {

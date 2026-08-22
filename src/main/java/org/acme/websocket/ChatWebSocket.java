@@ -162,6 +162,9 @@ public class ChatWebSocket {
             newMessage.sentAt = Instant.now();
             newMessage.clientMsgId = incoming.clientMsgId;
             newMessage.status = isRecipientOnline ? "DELIVERED" : "SENT";
+            // ── E2EE: persist opaque fields from sender ───────────────────
+            newMessage.messageType = incoming.messageType != null ? incoming.messageType : "text";
+            newMessage.iv = incoming.iv;
             if (isRecipientOnline) {
                 newMessage.deliveredAt = Instant.now();
             }
@@ -170,7 +173,7 @@ public class ChatWebSocket {
             // 1. Send ack to sender (with status DELIVERED or SENT)
             sendAck(connection, incoming.clientMsgId, newMessage.id, newMessage.status);
 
-            // 2. Push message to recipient if online
+            // 2. Push message to recipient if online (relay E2EE fields as-is)
             if (isRecipientOnline) {
                 WebSocketConnection recipientConn = recipientConnOpt.get();
                 OutgoingMessage pushMsg = OutgoingMessage.chatMessage(
@@ -180,7 +183,9 @@ public class ChatWebSocket {
                         newMessage.content,
                         newMessage.sentAt,
                         newMessage.clientMsgId,
-                        newMessage.status
+                        newMessage.status,
+                        newMessage.messageType,
+                        newMessage.iv
                 );
                 pushMsg.deliveredAt = newMessage.deliveredAt;
                 sendPush(recipientConn, pushMsg, incoming.recipientId);

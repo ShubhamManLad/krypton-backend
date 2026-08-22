@@ -11,5 +11,12 @@ public class IncomingMessage {
     public String content;
     public String clientMsgId;
 
+    // ── E2EE fields ──────────────────────────────────────────────────────────
+    /** "text" or "image" — defaults to "text" if absent */
+    public String messageType;
+
+    /** Base64-encoded AES-GCM Initialization Vector, required by recipient to decrypt */
+    public String iv;
+
     public IncomingMessage() {}
 }

@@ -49,6 +49,13 @@ public class OutgoingMessage {
     // For type="error"
     public String reason;
 
+    // ── E2EE fields ──────────────────────────────────────────────────────────
+    /** "text" or "image" — forwarded opaquely; server never decrypts this */
+    public String messageType;
+
+    /** Base64-encoded AES-GCM Initialization Vector — required by recipient to decrypt */
+    public String iv;
+
     public OutgoingMessage() {}
 
     public static OutgoingMessage ack(String clientMsgId, UUID serverMsgId, String status) {
@@ -64,7 +71,9 @@ public class OutgoingMessage {
         return ack(clientMsgId, serverMsgId, "SENT");
     }
 
-    public static OutgoingMessage chatMessage(UUID id, UUID conversationId, UUID senderId, String content, Instant sentAt, String clientMsgId, String status) {
+    public static OutgoingMessage chatMessage(UUID id, UUID conversationId, UUID senderId, String content,
+                                              Instant sentAt, String clientMsgId, String status,
+                                              String messageType, String iv) {
         OutgoingMessage msg = new OutgoingMessage();
         msg.type = "message";
         msg.id = id;
@@ -74,6 +83,8 @@ public class OutgoingMessage {
         msg.sentAt = sentAt;
         msg.clientMsgId = clientMsgId;
         msg.status = status != null ? status : "SENT";
+        msg.messageType = messageType != null ? messageType : "text";
+        msg.iv = iv;
         return msg;
     }
 
@@ -110,3 +121,4 @@ public class OutgoingMessage {
         return msg;
     }
 }
+

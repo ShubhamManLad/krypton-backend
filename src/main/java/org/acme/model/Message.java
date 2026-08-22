@@ -29,7 +29,8 @@ public class Message extends PanacheEntityBase {
     @Column(name = "sender_id", nullable = false)
     public UUID senderId;
 
-    @Column(name = "content", nullable = false, length = 4000)
+    /** Stores the encrypted payload (ciphertext). Column widened to support Base64-encoded encrypted images. */
+    @Column(name = "content", nullable = false, length = 65535)
     public String content;
 
     @Column(name = "sent_at", nullable = false)
@@ -46,6 +47,16 @@ public class Message extends PanacheEntityBase {
 
     @Column(name = "read_at")
     public Instant readAt;
+
+    // ── E2EE fields ──────────────────────────────────────────────────────────
+
+    /** "text" or "image" — stored as-is from the sender, never inspected by the server */
+    @Column(name = "message_type", nullable = false)
+    public String messageType = "text";
+
+    /** Base64-encoded AES-GCM Initialization Vector — relayed opaquely to the recipient */
+    @Column(name = "iv", nullable = true, length = 512)
+    public String iv;
 
     // ── Finders & Updates ───────────────────────────────────────────────────
 

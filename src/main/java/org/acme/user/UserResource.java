@@ -1,6 +1,7 @@
 package org.acme.user;
 
 import jakarta.inject.Inject;
+import jakarta.transaction.Transactional;
 import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
@@ -21,8 +22,11 @@ public class UserResource {
     @Inject
     JsonWebToken jwt;
 
+    // ── User list endpoints ───────────────────────────────────────────────────
+
     /**
-     * Returns all registered users with their real-time active/online status.
+     * Returns all registered users with their real-time active/online status
+     * and their E2EE public key (if registered).
      * Accessible via /users/active or /users
      */
     @GET
@@ -37,12 +41,7 @@ public class UserResource {
     }
 
     private Response getAllUsersWithStatus(boolean excludeSelf) {
-        UUID callerId = null;
-        if (jwt != null && jwt.getSubject() != null) {
-            try {
-                callerId = UUID.fromString(jwt.getSubject());
-            } catch (Exception ignored) {}
-        }
+        UUID callerId = getCallerId();
 
         Set<UUID> onlineIds = presenceRegistry.activeUserIds();
         List<User> users = User.listAll();
@@ -57,6 +56,10 @@ public class UserResource {
                     map.put("username", u.username);
                     map.put("active", isActive);
                     map.put("status", isActive ? "online" : "offline");
+                    // Include public key if available (null values omitted by caller's discretion)
+                    if (u.publicKey != null) {
+                        map.put("publicKey", u.publicKey);
+                    }
                     if (finalCallerId != null && u.id.equals(finalCallerId)) {
                         map.put("self", true);
                     }
@@ -74,5 +77,99 @@ public class UserResource {
                 .toList();
 
         return Response.ok(userList).build();
+    }
+
+    // ── E2EE Public Key endpoints ─────────────────────────────────────────────
+
+    /**
+     * Register or rotate the authenticated user's E2EE public key.
+     *
+     * PUT /users/me/public-key
+     * Body: { "publicKey": "base64_encoded_public_key" }
+     *
+     * The server stores the key as an opaque string — it is never used for
+     * any server-side cryptographic operation.
+     */
+    @PUT
+    @Path("/me/public-key")
+    @Transactional
+    public Response updateMyPublicKey(Map<String, String> body) {
+        UUID callerId = getCallerId();
+        if (callerId == null) {
+            return Response.status(Response.Status.UNAUTHORIZED)
+                    .entity(Map.of("error", "Unauthorized"))
+                    .build();
+        }
+
+        String publicKey = body != null ? body.get("publicKey") : null;
+        if (publicKey == null || publicKey.isBlank()) {
+            return Response.status(Response.Status.BAD_REQUEST)
+                    .entity(Map.of("error", "publicKey is required"))
+                    .build();
+        }
+
+        User user = User.findById(callerId);
+        if (user == null) {
+            return Response.status(Response.Status.NOT_FOUND)
+                    .entity(Map.of("error", "User not found"))
+                    .build();
+        }
+
+        user.publicKey = publicKey.trim();
+        user.persist();
+
+        return Response.ok(Map.of(
+                "userId", user.id.toString(),
+                "username", user.username,
+                "publicKey", user.publicKey
+        )).build();
+    }
+
+    /**
+     * Retrieve the E2EE public key of any registered user by their ID.
+     *
+     * GET /users/{userId}/public-key
+     * Response: { "userId": "...", "publicKey": "..." }
+     *
+     * Used during key-exchange before establishing an encrypted session.
+     */
+    @GET
+    @Path("/{userId}/public-key")
+    public Response getPublicKey(@PathParam("userId") UUID userId) {
+        UUID callerId = getCallerId();
+        if (callerId == null) {
+            return Response.status(Response.Status.UNAUTHORIZED)
+                    .entity(Map.of("error", "Unauthorized"))
+                    .build();
+        }
+
+        User user = User.findById(userId);
+        if (user == null) {
+            return Response.status(Response.Status.NOT_FOUND)
+                    .entity(Map.of("error", "User not found"))
+                    .build();
+        }
+
+        if (user.publicKey == null) {
+            return Response.status(Response.Status.NOT_FOUND)
+                    .entity(Map.of("error", "Public key not registered for this user"))
+                    .build();
+        }
+
+        return Response.ok(Map.of(
+                "userId", user.id.toString(),
+                "publicKey", user.publicKey
+        )).build();
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private UUID getCallerId() {
+        if (jwt == null || jwt.getSubject() == null) return null;
+        try {
+            return UUID.fromString(jwt.getSubject());
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 }
