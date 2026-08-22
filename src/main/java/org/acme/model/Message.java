@@ -30,7 +30,8 @@ public class Message extends PanacheEntityBase {
     public UUID senderId;
 
     /** Stores the encrypted payload (ciphertext). Column widened to support Base64-encoded encrypted images. */
-    @Column(name = "content", nullable = false, length = 65535)
+    @Lob
+    @Column(name = "content", nullable = false, columnDefinition = "TEXT")
     public String content;
 
     @Column(name = "sent_at", nullable = false)
