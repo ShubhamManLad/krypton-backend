@@ -2,6 +2,7 @@ package org.acme.websocket;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.time.Instant;
 import java.util.List;
@@ -53,6 +54,11 @@ public class OutgoingMessage {
     /** Base64-encoded AES-GCM Initialization Vector */
     public String iv;
 
+    // ── Quoted Reply Pass-Through ────────────────────────────────────────────
+    /** Optional client message ID of the original message being replied to */
+    @JsonProperty("replyToClientMsgId")
+    public String replyToClientMsgId;
+
     public OutgoingMessage() {}
 
     public static OutgoingMessage ack(String clientMsgId, String status) {
@@ -78,7 +84,8 @@ public class OutgoingMessage {
     }
 
     public static OutgoingMessage relayMessage(UUID senderId, UUID recipientId, String content,
-                                               String clientMsgId, String messageType, String iv, Instant sentAt) {
+                                               String clientMsgId, String messageType, String iv,
+                                               Instant sentAt, String replyToClientMsgId) {
         OutgoingMessage msg = new OutgoingMessage();
         msg.type = "message";
         msg.senderId = senderId;
@@ -89,6 +96,7 @@ public class OutgoingMessage {
         msg.iv = iv;
         msg.sentAt = sentAt != null ? sentAt : Instant.now();
         msg.status = "DELIVERED";
+        msg.replyToClientMsgId = replyToClientMsgId;
         return msg;
     }
 

@@ -177,7 +177,8 @@ public class ChatWebSocket {
                         incoming.clientMsgId,
                         incoming.messageType,
                         incoming.iv,
-                        Instant.now()
+                        Instant.now(),
+                        incoming.replyToClientMsgId
                 );
 
                 String json = objectMapper.writeValueAsString(pushMsg);
