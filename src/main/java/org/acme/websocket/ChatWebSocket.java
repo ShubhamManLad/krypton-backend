@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.quarkus.websockets.next.*;
 import io.smallrye.jwt.auth.principal.JWTParser;
 import io.smallrye.jwt.auth.principal.ParseException;
+import io.smallrye.mutiny.Uni;
+import io.vertx.core.buffer.Buffer;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.acme.model.User;
@@ -81,6 +83,23 @@ public class ChatWebSocket {
         presenceRegistry.broadcastUserOnline(userId, username);
     }
 
+    @OnPingMessage
+    public Uni<Void> onPing(Buffer buffer, WebSocketConnection connection) {
+        UUID userId = connectionUserMap.get(connection.id());
+        if (userId != null) {
+            presenceRegistry.recordHeartbeat(userId);
+        }
+        return connection.sendPong(buffer);
+    }
+
+    @OnPongMessage
+    public void onPong(Buffer buffer, WebSocketConnection connection) {
+        UUID userId = connectionUserMap.get(connection.id());
+        if (userId != null) {
+            presenceRegistry.recordHeartbeat(userId);
+        }
+    }
+
     @OnTextMessage
     public void onTextMessage(String messageText, WebSocketConnection connection) {
         UUID senderId = connectionUserMap.get(connection.id());
@@ -88,6 +107,9 @@ public class ChatWebSocket {
             sendError(connection, "Unauthorized session");
             return;
         }
+
+        // Record heartbeat on every inbound activity
+        presenceRegistry.recordHeartbeat(senderId);
 
         IncomingMessage incoming;
         try {
@@ -103,11 +125,28 @@ public class ChatWebSocket {
         }
 
         switch (incoming.type) {
+            case "ping" -> handlePing(connection, senderId);
+            case "pong" -> handlePong(senderId);
             case "message" -> handleChatMessage(incoming, senderId, connection);
             case "read" -> handleReadReceipt(incoming, senderId, connection);
             case "delivery_ack" -> handleDeliveryAck(incoming, senderId, connection);
             default -> sendError(connection, "Unknown message type: " + incoming.type);
         }
+    }
+
+    private void handlePing(WebSocketConnection connection, UUID senderId) {
+        presenceRegistry.recordHeartbeat(senderId);
+        try {
+            OutgoingMessage pong = OutgoingMessage.pong();
+            String json = objectMapper.writeValueAsString(pong);
+            connection.sendText(json).subscribe().with(v -> {}, err -> LOG.warn("Failed to send pong: {}", err.getMessage()));
+        } catch (Exception e) {
+            LOG.error("Failed to serialize pong", e);
+        }
+    }
+
+    private void handlePong(UUID senderId) {
+        presenceRegistry.recordHeartbeat(senderId);
     }
 
     private void handleChatMessage(IncomingMessage incoming, UUID senderId, WebSocketConnection connection) {
@@ -130,7 +169,6 @@ public class ChatWebSocket {
             Optional<WebSocketConnection> recipientConnOpt = presenceRegistry.connectionFor(incoming.recipientId);
 
             if (recipientConnOpt.isPresent() && recipientConnOpt.get().isOpen()) {
-                // 1. Recipient is ONLINE: Relay message directly in real-time
                 WebSocketConnection recipientConn = recipientConnOpt.get();
                 OutgoingMessage pushMsg = OutgoingMessage.relayMessage(
                         senderId,
@@ -141,13 +179,30 @@ public class ChatWebSocket {
                         incoming.iv,
                         Instant.now()
                 );
-                sendPush(recipientConn, pushMsg, incoming.recipientId);
 
-                // 2. Respond to sender with delivery confirmation ack
-                sendAck(connection, incoming.clientMsgId, "DELIVERED");
+                String json = objectMapper.writeValueAsString(pushMsg);
+
+                // Asynchronously attempt to write to recipient's socket
+                recipientConn.sendText(json).subscribe().with(
+                        v -> {
+                            // Successfully delivered to recipient: send ACK to sender
+                            sendAck(connection, incoming.clientMsgId, "DELIVERED");
+                        },
+                        err -> {
+                            // Socket write failure (EPIPE / ECONNRESET / dead socket)
+                            LOG.warn("Failed to forward message to recipient {} ({}); cleaning up dead connection",
+                                    incoming.recipientId, err.getMessage());
+
+                            // Clean up dead recipient socket
+                            cleanupDeadConnection(recipientConn, incoming.recipientId);
+
+                            // Immediately notify sender so their local outbox holds the message
+                            OutgoingMessage offlineMsg = OutgoingMessage.recipientOffline(incoming.recipientId, incoming.clientMsgId);
+                            sendPush(connection, offlineMsg, senderId);
+                        }
+                );
             } else {
-                // Recipient is OFFLINE: Zero-storage ephemeral policy.
-                // Do NOT buffer or persist to DB. Discard and notify sender's client-side outbox queue.
+                // Recipient is offline: notify sender immediately
                 OutgoingMessage offlineMsg = OutgoingMessage.recipientOffline(incoming.recipientId, incoming.clientMsgId);
                 sendPush(connection, offlineMsg, senderId);
             }
@@ -166,6 +221,7 @@ public class ChatWebSocket {
         try {
             Optional<WebSocketConnection> partnerConnOpt = presenceRegistry.connectionFor(targetUserId);
             if (partnerConnOpt.isPresent() && partnerConnOpt.get().isOpen()) {
+                WebSocketConnection partnerConn = partnerConnOpt.get();
                 OutgoingMessage readEvent = OutgoingMessage.readReceipt(
                         readerId,
                         incoming.partnerId,
@@ -173,7 +229,11 @@ public class ChatWebSocket {
                         incoming.messageId,
                         Instant.now()
                 );
-                sendPush(partnerConnOpt.get(), readEvent, targetUserId);
+                String json = objectMapper.writeValueAsString(readEvent);
+                partnerConn.sendText(json).subscribe().with(
+                        v -> {},
+                        err -> cleanupDeadConnection(partnerConn, targetUserId)
+                );
             }
         } catch (Exception e) {
             LOG.error("Error relaying read receipt", e);
@@ -189,16 +249,30 @@ public class ChatWebSocket {
         try {
             Optional<WebSocketConnection> senderConnOpt = presenceRegistry.connectionFor(targetUserId);
             if (senderConnOpt.isPresent() && senderConnOpt.get().isOpen()) {
+                WebSocketConnection senderConn = senderConnOpt.get();
                 OutgoingMessage deliveryEvent = OutgoingMessage.deliveryAck(
                         recipientId,
                         incoming.clientMsgId,
                         Instant.now()
                 );
-                sendPush(senderConnOpt.get(), deliveryEvent, targetUserId);
+                String json = objectMapper.writeValueAsString(deliveryEvent);
+                senderConn.sendText(json).subscribe().with(
+                        v -> {},
+                        err -> cleanupDeadConnection(senderConn, targetUserId)
+                );
             }
         } catch (Exception e) {
             LOG.error("Error relaying delivery ack", e);
         }
+    }
+
+    private void cleanupDeadConnection(WebSocketConnection conn, UUID userId) {
+        try {
+            connectionUserMap.remove(conn.id());
+            conn.close(new CloseReason(1006, "Socket write failure / connection broken"));
+        } catch (Throwable ignored) {}
+        presenceRegistry.leave(userId);
+        presenceRegistry.broadcastUserOffline(userId);
     }
 
     @OnClose

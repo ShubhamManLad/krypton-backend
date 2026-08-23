@@ -10,7 +10,7 @@ import java.util.UUID;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class OutgoingMessage {
 
-    public String type; // "ack", "recipient_offline", "message", "delivery_ack", "read", "user_online", "user_offline", "presence", "error"
+    public String type; // "ack", "recipient_offline", "message", "delivery_ack", "read", "user_online", "user_offline", "presence", "pong", "error"
 
     // For type="ack" or "recipient_offline"
     public String clientMsgId;
@@ -60,6 +60,12 @@ public class OutgoingMessage {
         msg.type = "ack";
         msg.clientMsgId = clientMsgId;
         msg.status = status != null ? status : "DELIVERED";
+        return msg;
+    }
+
+    public static OutgoingMessage pong() {
+        OutgoingMessage msg = new OutgoingMessage();
+        msg.type = "pong";
         return msg;
     }
 
