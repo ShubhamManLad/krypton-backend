@@ -8,7 +8,6 @@ import org.jboss.logging.Logger;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.stream.Collectors;
 
 @ApplicationScoped
 public class PresenceRegistry {
@@ -43,7 +42,10 @@ public class PresenceRegistry {
         return Collections.unmodifiableCollection(activeSessions.values());
     }
 
-    public void broadcastPresence() {
+    /**
+     * Sends the list of all currently active users directly to a specific connected client.
+     */
+    public void sendActiveUsers(WebSocketConnection conn) {
         try {
             List<Map<String, String>> userList = activeSessions.values().stream()
                     .map(s -> Map.of(
@@ -59,18 +61,60 @@ public class PresenceRegistry {
             );
 
             String json = objectMapper.writeValueAsString(presenceMsg);
+            if (conn.isOpen()) {
+                conn.sendText(json).subscribe().with(v -> {}, err -> LOG.warnf("Failed to send active users: %s", err.getMessage()));
+            }
+        } catch (Exception e) {
+            LOG.error("Failed to serialize active users list", e);
+        }
+    }
+
+    /**
+     * Broadcasts to all other connected clients that a user came online.
+     */
+    public void broadcastUserOnline(UUID userId, String username) {
+        try {
+            Map<String, Object> msg = Map.of(
+                    "type", "user_online",
+                    "userId", userId.toString(),
+                    "username", username != null ? username : ""
+            );
+            String json = objectMapper.writeValueAsString(msg);
 
             for (UserSession session : activeSessions.values()) {
-                WebSocketConnection conn = session.connection();
-                if (conn.isOpen()) {
-                    conn.sendText(json).subscribe().with(
-                            item -> {},
-                            failure -> LOG.warnf("Failed to send presence to user %s: %s", session.userId(), failure.getMessage())
+                if (!session.userId().equals(userId) && session.connection().isOpen()) {
+                    session.connection().sendText(json).subscribe().with(
+                            v -> {},
+                            failure -> LOG.warnf("Failed to send user_online to %s: %s", session.userId(), failure.getMessage())
                     );
                 }
             }
         } catch (Exception e) {
-            LOG.error("Failed to broadcast presence", e);
+            LOG.error("Failed to broadcast user_online", e);
+        }
+    }
+
+    /**
+     * Broadcasts to all other connected clients that a user went offline.
+     */
+    public void broadcastUserOffline(UUID userId) {
+        try {
+            Map<String, Object> msg = Map.of(
+                    "type", "user_offline",
+                    "userId", userId.toString()
+            );
+            String json = objectMapper.writeValueAsString(msg);
+
+            for (UserSession session : activeSessions.values()) {
+                if (!session.userId().equals(userId) && session.connection().isOpen()) {
+                    session.connection().sendText(json).subscribe().with(
+                            v -> {},
+                            failure -> LOG.warnf("Failed to send user_offline to %s: %s", session.userId(), failure.getMessage())
+                    );
+                }
+            }
+        } catch (Exception e) {
+            LOG.error("Failed to broadcast user_offline", e);
         }
     }
 }

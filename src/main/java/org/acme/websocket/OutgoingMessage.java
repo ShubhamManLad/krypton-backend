@@ -10,100 +10,99 @@ import java.util.UUID;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class OutgoingMessage {
 
-    public String type; // "ack", "message", "message_status", "read_receipt", "presence", "error"
+    public String type; // "ack", "recipient_offline", "message", "delivery_ack", "read", "user_online", "user_offline", "presence", "error"
 
-    // For type="ack"
+    // For type="ack" or "recipient_offline"
     public String clientMsgId;
     public UUID serverMsgId;
+    public UUID recipientId;
 
     // For type="message"
     public UUID id;
-    public UUID conversationId;
     public UUID senderId;
     public String content;
 
     @JsonFormat(shape = JsonFormat.Shape.STRING, timezone = "UTC")
     public Instant sentAt;
 
-    // Status tracking for Double Checkmark (SENT, DELIVERED, READ)
-    public String status;
+    public String status; // DELIVERED, SENT
 
-    @JsonFormat(shape = JsonFormat.Shape.STRING, timezone = "UTC")
-    public Instant deliveredAt;
-
-    @JsonFormat(shape = JsonFormat.Shape.STRING, timezone = "UTC")
-    public Instant readAt;
-
-    // For type="message_status"
+    // For type="delivery_ack" or "read"
     public UUID messageId;
+    public UUID readerId;
+    public UUID partnerId;
 
     @JsonFormat(shape = JsonFormat.Shape.STRING, timezone = "UTC")
     public Instant timestamp;
 
-    // For type="read_receipt"
-    public UUID readerId;
+    @JsonFormat(shape = JsonFormat.Shape.STRING, timezone = "UTC")
+    public Instant readAt;
 
-    // For type="presence"
+    // For type="presence", "user_online", "user_offline"
+    public UUID userId;
+    public String username;
     public List<?> activeUsers;
 
     // For type="error"
     public String reason;
 
     // ── E2EE fields ──────────────────────────────────────────────────────────
-    /** "text" or "image" — forwarded opaquely; server never decrypts this */
+    /** "text" or "image" */
     public String messageType;
 
-    /** Base64-encoded AES-GCM Initialization Vector — required by recipient to decrypt */
+    /** Base64-encoded AES-GCM Initialization Vector */
     public String iv;
 
     public OutgoingMessage() {}
 
-    public static OutgoingMessage ack(String clientMsgId, UUID serverMsgId, String status) {
+    public static OutgoingMessage ack(String clientMsgId, String status) {
         OutgoingMessage msg = new OutgoingMessage();
         msg.type = "ack";
         msg.clientMsgId = clientMsgId;
-        msg.serverMsgId = serverMsgId;
-        msg.status = status != null ? status : "SENT";
+        msg.status = status != null ? status : "DELIVERED";
         return msg;
     }
 
-    public static OutgoingMessage ack(String clientMsgId, UUID serverMsgId) {
-        return ack(clientMsgId, serverMsgId, "SENT");
+    public static OutgoingMessage recipientOffline(UUID recipientId, String clientMsgId) {
+        OutgoingMessage msg = new OutgoingMessage();
+        msg.type = "recipient_offline";
+        msg.recipientId = recipientId;
+        msg.clientMsgId = clientMsgId;
+        return msg;
     }
 
-    public static OutgoingMessage chatMessage(UUID id, UUID conversationId, UUID senderId, String content,
-                                              Instant sentAt, String clientMsgId, String status,
-                                              String messageType, String iv) {
+    public static OutgoingMessage relayMessage(UUID senderId, UUID recipientId, String content,
+                                               String clientMsgId, String messageType, String iv, Instant sentAt) {
         OutgoingMessage msg = new OutgoingMessage();
         msg.type = "message";
-        msg.id = id;
-        msg.conversationId = conversationId;
         msg.senderId = senderId;
+        msg.recipientId = recipientId;
         msg.content = content;
-        msg.sentAt = sentAt;
         msg.clientMsgId = clientMsgId;
-        msg.status = status != null ? status : "SENT";
         msg.messageType = messageType != null ? messageType : "text";
         msg.iv = iv;
+        msg.sentAt = sentAt != null ? sentAt : Instant.now();
+        msg.status = "DELIVERED";
         return msg;
     }
 
-    public static OutgoingMessage messageStatus(UUID messageId, UUID conversationId, String status, Instant timestamp) {
+    public static OutgoingMessage deliveryAck(UUID senderId, String clientMsgId, Instant timestamp) {
         OutgoingMessage msg = new OutgoingMessage();
-        msg.type = "message_status";
-        msg.messageId = messageId;
-        msg.conversationId = conversationId;
-        msg.status = status;
-        msg.timestamp = timestamp;
+        msg.type = "delivery_ack";
+        msg.senderId = senderId;
+        msg.clientMsgId = clientMsgId;
+        msg.timestamp = timestamp != null ? timestamp : Instant.now();
         return msg;
     }
 
-    public static OutgoingMessage readReceipt(UUID conversationId, UUID readerId, Instant readAt) {
+    public static OutgoingMessage readReceipt(UUID readerId, UUID partnerId, String clientMsgId, UUID messageId, Instant readAt) {
         OutgoingMessage msg = new OutgoingMessage();
-        msg.type = "read_receipt";
-        msg.conversationId = conversationId;
+        msg.type = "read";
         msg.readerId = readerId;
-        msg.readAt = readAt;
+        msg.partnerId = partnerId;
+        msg.clientMsgId = clientMsgId;
+        msg.messageId = messageId;
+        msg.readAt = readAt != null ? readAt : Instant.now();
         return msg;
     }
 
@@ -113,12 +112,4 @@ public class OutgoingMessage {
         msg.reason = reason;
         return msg;
     }
-
-    public static OutgoingMessage presence(List<?> activeUsers) {
-        OutgoingMessage msg = new OutgoingMessage();
-        msg.type = "presence";
-        msg.activeUsers = activeUsers;
-        return msg;
-    }
 }
-

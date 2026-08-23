@@ -69,7 +69,7 @@ public class MediaResource {
 
     /**
      * Upload an encrypted base64 image or file payload.
-     * Stored in the database and returns a unique identifier (UUID).
+     * Ephemerally stored until fetched by recipient.
      */
     @POST
     @RolesAllowed("user")
@@ -99,7 +99,7 @@ public class MediaResource {
 
             media.persist();
 
-            LOG.info("Media {} uploaded successfully by user {} (size: {} chars)", media.id, authenticatedUserId, media.sizeBytes);
+            LOG.info("Ephemeral media {} uploaded by user {} (size: {} bytes)", media.id, authenticatedUserId, media.sizeBytes);
 
             return Response.status(Response.Status.CREATED)
                     .entity(new MediaUploadResponse(media.id, media.sizeBytes, media.createdAt))
@@ -114,10 +114,12 @@ public class MediaResource {
 
     /**
      * Fetch the base64 media payload by its unique ID.
+     * AUTO-DELETION: The media payload is immediately deleted once downloaded (burn-on-read).
      */
     @GET
     @Path("/{id}")
     @RolesAllowed("user")
+    @Transactional
     public Response getMedia(@PathParam("id") UUID id) {
         UUID authenticatedUserId = getAuthenticatedUserId();
         if (authenticatedUserId == null) {
@@ -135,11 +137,17 @@ public class MediaResource {
         Media media = Media.findById(id);
         if (media == null) {
             return Response.status(Response.Status.NOT_FOUND)
-                    .entity(Map.of("error", "Media not found"))
+                    .entity(Map.of("error", "Media not found or already deleted"))
                     .build();
         }
 
-        return Response.ok(new MediaResponse(media)).build();
+        MediaResponse response = new MediaResponse(media);
+
+        // Auto-deletion: delete immediately upon download
+        media.delete();
+        LOG.info("Ephemeral media {} fetched and auto-deleted by user {}", id, authenticatedUserId);
+
+        return Response.ok(response).build();
     }
 
     private UUID getAuthenticatedUserId() {

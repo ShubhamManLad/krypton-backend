@@ -1,8 +1,8 @@
 {
   "info": {
     "_postman_id": "7a8b9c0d-1e2f-3a4b-5c6d-7e8f9a0b1c2d",
-    "name": "Krypton Chat API",
-    "description": "Postman Collection for Krypton Chat Backend (Quarkus REST & WebSockets)",
+    "name": "Krypton Chat API (Zero-Storage Architecture)",
+    "description": "Postman Collection for Krypton Zero-Storage Ephemeral Relay & Presence Broker",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -32,7 +32,7 @@
       "type": "string"
     },
     {
-      "key": "conversationId",
+      "key": "mediaId",
       "value": "",
       "type": "string"
     }
@@ -200,30 +200,21 @@
       ]
     },
     {
-      "name": "Users",
+      "name": "Users & Public Keys",
       "item": [
         {
-          "name": "Get Active Users",
+          "name": "Get All Users (Directory)",
           "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/users/active",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "users",
-                "active"
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
               ]
             },
-            "description": "Fetches a list of all currently active/online users in the system."
-          },
-          "response": []
-        },
-        {
-          "name": "Get All Users",
-          "request": {
             "method": "GET",
             "header": [],
             "url": {
@@ -235,196 +226,86 @@
                 "users"
               ]
             },
-            "description": "Fetches a list of all registered users in the system, excluding the caller, along with their active/online status."
+            "description": "Fetches all registered users with real-time online status and their E2EE public keys."
+          },
+          "response": []
+        },
+        {
+          "name": "Register/Update My Public Key",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"publicKey\": \"MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA...\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/users/me/public-key",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users",
+                "me",
+                "public-key"
+              ]
+            },
+            "description": "Registers or rotates the authenticated user's E2EE public key in the directory."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Partner Public Key",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/users/{{recipientId}}/public-key",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users",
+                "{{recipientId}}",
+                "public-key"
+              ]
+            },
+            "description": "Fetches a partner user's public key by their UUID."
           },
           "response": []
         }
       ]
     },
     {
-      "name": "Conversations",
+      "name": "Media (Ephemeral Burn-on-Read)",
       "item": [
         {
-          "name": "List Active Conversations",
-          "request": {
-            "auth": {
-              "type": "bearer",
-              "bearer": [
-                {
-                  "key": "token",
-                  "value": "{{token}}",
-                  "type": "string"
-                }
-              ]
-            },
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/conversations",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "conversations"
-              ]
-            },
-            "description": "Fetches all active conversations for the authenticated user sorted by latest message activity DESC."
-          },
-          "response": []
-        },
-        {
-          "name": "Get or Create Conversation with Recipient",
-          "request": {
-            "auth": {
-              "type": "bearer",
-              "bearer": [
-                {
-                  "key": "token",
-                  "value": "{{token}}",
-                  "type": "string"
-                }
-              ]
-            },
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/conversations/with/{{recipientId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "conversations",
-                "with",
-                "{{recipientId}}"
-              ]
-            },
-            "description": "Finds existing 1:1 conversation or creates a new one between the caller and the recipient user ID."
-          },
-          "response": []
-        },
-        {
-          "name": "Get Messages with Partner ID",
-          "request": {
-            "auth": {
-              "type": "bearer",
-              "bearer": [
-                {
-                  "key": "token",
-                  "value": "{{token}}",
-                  "type": "string"
-                }
-              ]
-            },
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/conversations/messages?partnerId={{recipientId}}&limit=50",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "conversations",
-                "messages"
-              ],
-              "query": [
-                {
-                  "key": "partnerId",
-                  "value": "{{recipientId}}",
-                  "description": "Partner User ID"
-                },
-                {
-                  "key": "before",
-                  "value": "2026-08-15T12:00:00Z",
-                  "description": "Optional ISO-8601 timestamp",
-                  "disabled": true
-                },
-                {
-                  "key": "limit",
-                  "value": "50",
-                  "description": "Optional limit (default 50)"
-                }
-              ]
-            },
-            "description": "Fetches messages directly by partner user ID."
-          },
-          "response": []
-        },
-        {
-          "name": "Get Conversation Messages by ID",
-          "request": {
-            "auth": {
-              "type": "bearer",
-              "bearer": [
-                {
-                  "key": "token",
-                  "value": "{{token}}",
-                  "type": "string"
-                }
-              ]
-            },
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/conversations/{{conversationId}}/messages?limit=50",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "conversations",
-                "{{conversationId}}",
-                "messages"
-              ],
-              "query": [
-                {
-                  "key": "before",
-                  "value": "2026-08-15T12:00:00Z",
-                  "description": "Optional ISO-8601 timestamp to fetch messages before this point",
-                  "disabled": true
-                },
-                {
-                  "key": "limit",
-                  "value": "50",
-                  "description": "Optional limit (default 50)"
-                }
-              ]
-            },
-        {
-          "name": "Mark Conversation as Read",
-          "request": {
-            "auth": {
-              "type": "bearer",
-              "bearer": [
-                {
-                  "key": "token",
-                  "value": "{{token}}",
-                  "type": "string"
-                }
-              ]
-            },
-            "method": "POST",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/conversations/{{conversationId}}/read",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "conversations",
-                "{{conversationId}}",
-                "read"
-              ]
-            },
-            "description": "Marks all messages sent to the authenticated user in the conversation as READ and dispatches read receipt over WebSocket."
-          },
-          "response": []
-        }
-      ]
-    },
-    {
-      "name": "Media",
-      "item": [
-        {
-          "name": "Upload Media (Encrypted Base64)",
+          "name": "Upload Ephemeral Media",
           "event": [
             {
               "listen": "test",
@@ -472,12 +353,12 @@
                 "media"
               ]
             },
-            "description": "Uploads an encrypted Base64 string payload and returns a unique media ID/UUID."
+            "description": "Uploads an encrypted Base64 string payload and returns a unique media UUID."
           },
           "response": []
         },
         {
-          "name": "Get Media by ID",
+          "name": "Get & Burn Ephemeral Media by ID",
           "request": {
             "auth": {
               "type": "bearer",
@@ -501,14 +382,14 @@
                 "{{mediaId}}"
               ]
             },
-            "description": "Fetches the Base64 media data payload using the media ID."
+            "description": "Fetches the Base64 media data and immediately deletes it from the server (Burn-on-Read)."
           },
           "response": []
         }
       ]
     },
     {
-      "name": "WebSocket (Reference & Documentation)",
+      "name": "WebSocket (Zero-Storage Relay Reference)",
       "item": [
         {
           "name": "1. Connect URL & Handshake",
@@ -531,35 +412,7 @@
                 }
               ]
             },
-            "description": "### WebSocket Connection URL\nUse Postman's WebSocket Request feature or any WebSocket client to connect to:\n`ws://localhost:8080/chat?token={{token}}`\n\n- Rejects with code 4001 if token is invalid or missing.\n- Automatically registers presence and broadcasts active users list."
-          },
-          "response": []
-        },
-        {
-          "name": "2. Client Send Message Payload (Sample)",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"type\": \"message\",\n  \"recipientId\": \"{{recipientId}}\",\n  \"content\": \"Hello there!\",\n  \"clientMsgId\": \"{{$guid}}\"\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/websocket/sample-send-message",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "websocket",
-                "sample-send-message"
-              ]
-            },
-            "description": "### Sample JSON payload to send over WebSocket connection:\n```json\n{\n  \"type\": \"message\",\n  \"recipientId\": \"<uuid>\",\n  \"content\": \"Hello there!\",\n  \"clientMsgId\": \"<uuid>\"\n}\n```\n\n### Expected Server Ack to Sender:\n```json\n{\n  \"type\": \"ack\",\n  \"clientMsgId\": \"<same-uuid>\",\n  \"serverMsgId\": \"<server-uuid>\"\n}\n```\n\n### Expected Server Push to Recipient:\n```json\n{\n  \"type\": \"message\",\n  \"id\": \"<server-uuid>\",\n  \"conversationId\": \"<uuid>\",\n  \"senderId\": \"<uuid>\",\n  \"content\": \"Hello there!\",\n  \"sentAt\": \"2026-08-15T10:30:00Z\",\n  \"clientMsgId\": \"<client-uuid>\"\n}\n```"
+            "description": "### WebSocket Connection URL\nConnect to: `ws://localhost:8080/chat?token={{token}}`\n\n### Events Sent Immediately on Connect:\n- Active users list to connected client: `{\"type\": \"presence\", \"activeUsers\": [...]}`\n- Broadcast to other connected clients: `{\"type\": \"user_online\", \"userId\": \"<uuid>\", \"username\": \"<name>\"}`"
           },
           "response": []
         }

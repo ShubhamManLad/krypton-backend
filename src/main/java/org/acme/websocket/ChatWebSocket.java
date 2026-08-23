@@ -6,10 +6,6 @@ import io.smallrye.jwt.auth.principal.JWTParser;
 import io.smallrye.jwt.auth.principal.ParseException;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
-import jakarta.transaction.Transactional;
-import org.acme.conversation.ConversationService;
-import org.acme.model.Conversation;
-import org.acme.model.Message;
 import org.acme.model.User;
 import org.acme.presence.PresenceRegistry;
 import org.eclipse.microprofile.jwt.JsonWebToken;
@@ -19,7 +15,6 @@ import org.slf4j.LoggerFactory;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -36,9 +31,6 @@ public class ChatWebSocket {
 
     @Inject
     PresenceRegistry presenceRegistry;
-
-    @Inject
-    ConversationService conversationService;
 
     @Inject
     ObjectMapper objectMapper;
@@ -82,15 +74,14 @@ public class ChatWebSocket {
         presenceRegistry.join(userId, username, connection);
         LOG.info("User {} ({}) connected on WebSocket session {}", username, userId, connection.id());
 
-        // Broadcast presence to ALL connected clients
-        presenceRegistry.broadcastPresence();
+        // 1. Send currently active online users list directly to this connected client
+        presenceRegistry.sendActiveUsers(connection);
 
-        // Mark any pending undelivered messages sent to this user as DELIVERED
-        markPendingMessagesDeliveredOnConnect(userId);
+        // 2. Broadcast user_online event to all other active connected clients
+        presenceRegistry.broadcastUserOnline(userId, username);
     }
 
     @OnTextMessage
-    @Transactional
     public void onTextMessage(String messageText, WebSocketConnection connection) {
         UUID senderId = connectionUserMap.get(connection.id());
         if (senderId == null) {
@@ -125,12 +116,6 @@ public class ChatWebSocket {
             return;
         }
 
-        User recipient = User.findById(incoming.recipientId);
-        if (recipient == null) {
-            sendError(connection, "Recipient user not found");
-            return;
-        }
-
         if (incoming.content == null || incoming.content.trim().isEmpty()) {
             sendError(connection, "Message content cannot be blank");
             return;
@@ -142,157 +127,77 @@ public class ChatWebSocket {
         }
 
         try {
-            Conversation conversation = conversationService.findOrCreate(senderId, incoming.recipientId);
-
-            // Check idempotency with clientMsgId
-            Message existing = Message.findByClientMsgId(incoming.clientMsgId);
-            if (existing != null) {
-                sendAck(connection, existing.clientMsgId, existing.id, existing.status);
-                return;
-            }
-
-            // Check if recipient is currently online to set status
             Optional<WebSocketConnection> recipientConnOpt = presenceRegistry.connectionFor(incoming.recipientId);
-            boolean isRecipientOnline = recipientConnOpt.isPresent() && recipientConnOpt.get().isOpen();
 
-            Message newMessage = new Message();
-            newMessage.conversationId = conversation.id;
-            newMessage.senderId = senderId;
-            newMessage.content = incoming.content;
-            newMessage.sentAt = Instant.now();
-            newMessage.clientMsgId = incoming.clientMsgId;
-            newMessage.status = isRecipientOnline ? "DELIVERED" : "SENT";
-            // ── E2EE: persist opaque fields from sender ───────────────────
-            newMessage.messageType = incoming.messageType != null ? incoming.messageType : "text";
-            newMessage.iv = incoming.iv;
-            if (isRecipientOnline) {
-                newMessage.deliveredAt = Instant.now();
-            }
-            newMessage.persist();
-
-            // 1. Send ack to sender (with status DELIVERED or SENT)
-            sendAck(connection, incoming.clientMsgId, newMessage.id, newMessage.status);
-
-            // 2. Push message to recipient if online (relay E2EE fields as-is)
-            if (isRecipientOnline) {
+            if (recipientConnOpt.isPresent() && recipientConnOpt.get().isOpen()) {
+                // 1. Recipient is ONLINE: Relay message directly in real-time
                 WebSocketConnection recipientConn = recipientConnOpt.get();
-                OutgoingMessage pushMsg = OutgoingMessage.chatMessage(
-                        newMessage.id,
-                        conversation.id,
+                OutgoingMessage pushMsg = OutgoingMessage.relayMessage(
                         senderId,
-                        newMessage.content,
-                        newMessage.sentAt,
-                        newMessage.clientMsgId,
-                        newMessage.status,
-                        newMessage.messageType,
-                        newMessage.iv
+                        incoming.recipientId,
+                        incoming.content,
+                        incoming.clientMsgId,
+                        incoming.messageType,
+                        incoming.iv,
+                        Instant.now()
                 );
-                pushMsg.deliveredAt = newMessage.deliveredAt;
                 sendPush(recipientConn, pushMsg, incoming.recipientId);
+
+                // 2. Respond to sender with delivery confirmation ack
+                sendAck(connection, incoming.clientMsgId, "DELIVERED");
+            } else {
+                // Recipient is OFFLINE: Zero-storage ephemeral policy.
+                // Do NOT buffer or persist to DB. Discard and notify sender's client-side outbox queue.
+                OutgoingMessage offlineMsg = OutgoingMessage.recipientOffline(incoming.recipientId, incoming.clientMsgId);
+                sendPush(connection, offlineMsg, senderId);
             }
         } catch (Exception e) {
-            LOG.error("Error processing message", e);
-            sendError(connection, "Internal server error processing message");
+            LOG.error("Error relaying message", e);
+            sendError(connection, "Internal server error relaying message");
         }
     }
 
     private void handleReadReceipt(IncomingMessage incoming, UUID readerId, WebSocketConnection connection) {
-        if (incoming.conversationId == null && incoming.messageId == null) {
-            if (incoming.partnerId != null) {
-                Conversation conv = Conversation.findBetween(readerId, incoming.partnerId);
-                if (conv != null) {
-                    incoming.conversationId = conv.id;
-                } else {
-                    // Empty conversation on first open, nothing to mark as read
-                    return;
-                }
-            } else {
-                return;
-            }
-        }
-
-        try {
-            UUID conversationId = incoming.conversationId;
-            if (conversationId == null && incoming.messageId != null) {
-                Message msg = Message.findById(incoming.messageId);
-                if (msg != null) {
-                    conversationId = msg.conversationId;
-                }
-            }
-
-            if (conversationId == null) {
-                sendError(connection, "Conversation not found");
-                return;
-            }
-
-            Conversation conv = Conversation.findById(conversationId);
-            if (conv == null || !conv.hasParticipant(readerId)) {
-                sendError(connection, "Conversation not found or access denied");
-                return;
-            }
-
-            Instant readAt = Instant.now();
-            conversationService.markConversationAsRead(conversationId, readerId);
-
-            // Notify the other participant if online
-            UUID otherUserId = conv.user1Id.equals(readerId) ? conv.user2Id : conv.user1Id;
-            Optional<WebSocketConnection> otherConnOpt = presenceRegistry.connectionFor(otherUserId);
-            if (otherConnOpt.isPresent() && otherConnOpt.get().isOpen()) {
-                OutgoingMessage readEvent = OutgoingMessage.readReceipt(conversationId, readerId, readAt);
-                sendPush(otherConnOpt.get(), readEvent, otherUserId);
-            }
-        } catch (Exception e) {
-            LOG.error("Error processing read receipt", e);
-            sendError(connection, "Failed to process read receipt");
-        }
-    }
-
-    private void handleDeliveryAck(IncomingMessage incoming, UUID recipientId, WebSocketConnection connection) {
-        if (incoming.messageId == null && incoming.conversationId == null) {
+        UUID targetUserId = incoming.recipientId != null ? incoming.recipientId : incoming.partnerId;
+        if (targetUserId == null) {
             return;
         }
 
         try {
-            if (incoming.messageId != null) {
-                Message msg = Message.findById(incoming.messageId);
-                if (msg != null && "SENT".equals(msg.status)) {
-                    msg.status = "DELIVERED";
-                    msg.deliveredAt = Instant.now();
-                    msg.persist();
-
-                    // Notify sender
-                    Optional<WebSocketConnection> senderConnOpt = presenceRegistry.connectionFor(msg.senderId);
-                    if (senderConnOpt.isPresent() && senderConnOpt.get().isOpen()) {
-                        OutgoingMessage statusEvent = OutgoingMessage.messageStatus(msg.id, msg.conversationId, "DELIVERED", msg.deliveredAt);
-                        sendPush(senderConnOpt.get(), statusEvent, msg.senderId);
-                    }
-                }
-            } else if (incoming.conversationId != null) {
-                conversationService.markConversationAsDelivered(incoming.conversationId, recipientId);
+            Optional<WebSocketConnection> partnerConnOpt = presenceRegistry.connectionFor(targetUserId);
+            if (partnerConnOpt.isPresent() && partnerConnOpt.get().isOpen()) {
+                OutgoingMessage readEvent = OutgoingMessage.readReceipt(
+                        readerId,
+                        incoming.partnerId,
+                        incoming.clientMsgId,
+                        incoming.messageId,
+                        Instant.now()
+                );
+                sendPush(partnerConnOpt.get(), readEvent, targetUserId);
             }
         } catch (Exception e) {
-            LOG.error("Error processing delivery ack", e);
+            LOG.error("Error relaying read receipt", e);
         }
     }
 
-    @Transactional
-    public void markPendingMessagesDeliveredOnConnect(UUID userId) {
+    private void handleDeliveryAck(IncomingMessage incoming, UUID recipientId, WebSocketConnection connection) {
+        UUID targetUserId = incoming.recipientId != null ? incoming.recipientId : incoming.partnerId;
+        if (targetUserId == null) {
+            return;
+        }
+
         try {
-            List<Conversation> conversations = Conversation.findByUser(userId);
-            Instant now = Instant.now();
-            for (Conversation conv : conversations) {
-                int updated = Message.markMessagesDelivered(conv.id, userId, now);
-                if (updated > 0) {
-                    UUID partnerId = conv.user1Id.equals(userId) ? conv.user2Id : conv.user1Id;
-                    Optional<WebSocketConnection> partnerConnOpt = presenceRegistry.connectionFor(partnerId);
-                    if (partnerConnOpt.isPresent() && partnerConnOpt.get().isOpen()) {
-                        OutgoingMessage statusEvent = OutgoingMessage.messageStatus(null, conv.id, "DELIVERED", now);
-                        sendPush(partnerConnOpt.get(), statusEvent, partnerId);
-                    }
-                }
+            Optional<WebSocketConnection> senderConnOpt = presenceRegistry.connectionFor(targetUserId);
+            if (senderConnOpt.isPresent() && senderConnOpt.get().isOpen()) {
+                OutgoingMessage deliveryEvent = OutgoingMessage.deliveryAck(
+                        recipientId,
+                        incoming.clientMsgId,
+                        Instant.now()
+                );
+                sendPush(senderConnOpt.get(), deliveryEvent, targetUserId);
             }
         } catch (Exception e) {
-            LOG.warn("Failed to mark pending messages as delivered on connect: {}", e.getMessage());
+            LOG.error("Error relaying delivery ack", e);
         }
     }
 
@@ -302,7 +207,8 @@ public class ChatWebSocket {
         if (userId != null) {
             presenceRegistry.leave(userId);
             LOG.info("User {} disconnected from WebSocket session {}", userId, connection.id());
-            presenceRegistry.broadcastPresence();
+            // Broadcast user_offline to all remaining active clients
+            presenceRegistry.broadcastUserOffline(userId);
         }
     }
 
@@ -325,9 +231,9 @@ public class ChatWebSocket {
         return null;
     }
 
-    private void sendAck(WebSocketConnection connection, String clientMsgId, UUID serverMsgId, String status) {
+    private void sendAck(WebSocketConnection connection, String clientMsgId, String status) {
         try {
-            OutgoingMessage ack = OutgoingMessage.ack(clientMsgId, serverMsgId, status);
+            OutgoingMessage ack = OutgoingMessage.ack(clientMsgId, status);
             String json = objectMapper.writeValueAsString(ack);
             connection.sendText(json).subscribe().with(v -> {}, err -> LOG.warn("Failed to send ack: {}", err.getMessage()));
         } catch (Exception e) {
